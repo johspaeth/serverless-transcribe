@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: >
+Description: >-
   Easy serverless Amazon Trascribe
 Parameters:
   BasicAuthUsername:
@@ -75,7 +75,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: lambdas/TranscriptionJobStartFunction/
-      Description: >
+      Description: >-
         Starts transcription jobs when triggered by S3 events
       Environment:
         Variables:
@@ -361,26 +361,9 @@ Resources:
       Targets:
         - Arn: !GetAtt TranscriptionJobStateChangeFunction.Arn
           Id: !Sub ${AWS::StackName}.Transcribe.JobState
-  # Website API
-  WebsiteApiFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: lambdas/WebsiteApiFunction/
-      Description: >
-        Provides a simple API for browser-based S3 uploading
-      Environment:
-        Variables:
-          MEDIA_BUCKET: !Ref MediaBucket
-          MEDIA_BUCKET_DOMAIN_NAME: !GetAtt MediaBucket.RegionalDomainName
-          UPLOAD_ACCESS_KEY_ID: !Ref MediaBucketAccessIamUserAccessKey
-          UPLOAD_SECRET_ACCESS_KEY: !GetAtt MediaBucketAccessIamUserAccessKey.SecretAccessKey
-      Handler: lambda_function.lambda_handler
-      MemorySize: 128
-      Role: !GetAtt WebsiteApiFunctionIamRole.Arn
-      Runtime: python3.7
-      Tags:
-        Project: serverless-transcribe
-      Timeout: 3
+  # API
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
   WebsiteApiFunctionIamRole:
     Type: AWS::IAM::Role
     Properties:
@@ -396,73 +379,29 @@ Resources:
       Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  WebsiteApi:
-    Type: AWS::ApiGateway::RestApi
-    Properties:
-      Name: !Ref AWS::StackName
-      Description: Transcription website API
-  WebsiteApiStage:
-    Type: AWS::ApiGateway::Stage
-    Properties:
-      StageName: omega
-      RestApiId: !Ref WebsiteApi
-      DeploymentId: !Ref WebsiteApiDeployment
-  WebsiteApiDeployment:
-    DependsOn:
-      - WebsiteApiBrowserBasedUploadMethod
-      - StaticWebsiteMethod
-    Type: AWS::ApiGateway::Deployment
-    Properties:
-      RestApiId: !Ref WebsiteApi
-  WebsiteApiUnauthorizedGatewayReponse:
-    Type: AWS::ApiGateway::GatewayResponse
-    Properties:
-      ResponseParameters:
-        gatewayresponse.header.WWW-Authenticate: "'Basic'"
-      ResponseType: UNAUTHORIZED
-      RestApiId: !Ref WebsiteApi
-      StatusCode: "401"
-  WebsiteApiV1Resource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref WebsiteApi
-      ParentId: !GetAtt WebsiteApi.RootResourceId
-      PathPart: v1
-  WebsiteApiBrowserBasedUploadResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref WebsiteApi
-      ParentId: !Ref WebsiteApiV1Resource
-      PathPart: browser-based-upload
-  WebsiteApiBrowserBasedUploadMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref WebsiteApi
-      ResourceId: !Ref WebsiteApiBrowserBasedUploadResource
-      HttpMethod: GET
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebsiteApiFunction.Arn}/invocations
-  WebsiteApiBrowserBasedUploadMethodInvokeFunctionPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt WebsiteApiFunction.Arn
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebsiteApi}/${WebsiteApiStage}/*"
-  # Static Website
-  StaticWebsiteFunction:
+  WebsiteApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambdas/StaticWebsiteFunction/
-      Description: >
-        Generates a basic front end for uploading files to S3
+      CodeUri: lambdas/WebsiteApiFunction/
+      Description: >-
+        Provides a simple API for browser-based S3 uploading
+      Environment:
+        Variables:
+          MEDIA_BUCKET: !Ref MediaBucket
+          MEDIA_BUCKET_DOMAIN_NAME: !GetAtt MediaBucket.RegionalDomainName
+          UPLOAD_ACCESS_KEY_ID: !Ref MediaBucketAccessIamUserAccessKey
+          UPLOAD_SECRET_ACCESS_KEY: !GetAtt MediaBucketAccessIamUserAccessKey.SecretAccessKey
+      Events:
+        ApiRequest:
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: get
+            Path: /v1/browser-based-upload
+          Type: HttpApi
       Handler: lambda_function.lambda_handler
       MemorySize: 128
-      Role: !GetAtt StaticWebsiteFunctionIamRole.Arn
-      Runtime: python3.7
+      Role: !GetAtt WebsiteApiFunctionIamRole.Arn
+      Runtime: python3.8
       Tags:
         Project: serverless-transcribe
       Timeout: 3
@@ -481,45 +420,26 @@ Resources:
       Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  StaticWebsiteResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref WebsiteApi
-      ParentId: !GetAtt WebsiteApi.RootResourceId
-      PathPart: upload
-  StaticWebsiteMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      AuthorizationType: CUSTOM
-      AuthorizerId: !Ref StaticWebsiteAuthorizer
-      HttpMethod: GET
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${StaticWebsiteFunction.Arn}/invocations
-      ResourceId: !Ref StaticWebsiteResource
-      RestApiId: !Ref WebsiteApi
-  StaticWebsiteMethodInvokeFunctionPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt StaticWebsiteFunction.Arn
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebsiteApi}/${WebsiteApiStage}/*"
-  StaticWebsiteAuthorizerFunction:
+  StaticWebsiteFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambdas/StaticWebsiteAuthorizerFunction/
-      Description: >
-        Authorizer for S3 file upload front end
-      Environment:
-        Variables:
-          BASIC_AUTH_USERNAME: !Ref BasicAuthUsername
-          BASIC_AUTH_PASSWORD: !Ref BasicAuthPassword
+      CodeUri: lambdas/StaticWebsiteFunction/
+      Description: >-
+        Generates a basic front end for uploading files to S3
+      Events:
+        ApiRequest:
+          Properties:
+            ApiId: !Ref HttpApi
+            Auth:
+              AuthorizationScopes:
+              Authorizer:
+            Method: get
+            Path: /upload
+          Type: HttpApi
       Handler: lambda_function.lambda_handler
       MemorySize: 128
-      Role: !GetAtt StaticWebsiteAuthorizerFunctionIamRole.Arn
-      Runtime: python3.7
+      Role: !GetAtt StaticWebsiteFunctionIamRole.Arn
+      Runtime: python3.8
       Tags:
         Project: serverless-transcribe
       Timeout: 3
@@ -538,6 +458,43 @@ Resources:
       Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  StaticWebsiteAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/StaticWebsiteAuthorizerFunction/
+      Description: >-
+        Authorizer for S3 file upload front end
+      Environment:
+        Variables:
+          BASIC_AUTH_USERNAME: !Ref BasicAuthUsername
+          BASIC_AUTH_PASSWORD: !Ref BasicAuthPassword
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt StaticWebsiteAuthorizerFunctionIamRole.Arn
+      Runtime: python3.7
+      Tags:
+        Project: serverless-transcribe
+      Timeout: 3
+
+
+
+
+
+  # Website API
+
+  # WebsiteApiUnauthorizedGatewayReponse:
+  #   Type: AWS::ApiGateway::GatewayResponse
+  #   Properties:
+  #     ResponseParameters:
+  #       gatewayresponse.header.WWW-Authenticate: "'Basic'"
+  #     ResponseType: UNAUTHORIZED
+  #     RestApiId: !Ref WebsiteApi
+  #     StatusCode: "401"
+  # Static Website
+
+
+
+
   StaticWebsiteAuthorizer:
     Type: AWS::ApiGateway::Authorizer
     Properties:

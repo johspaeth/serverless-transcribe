@@ -10,6 +10,13 @@ import base64
 def lambda_handler(event, context):
     headers = event['headers']
 
+    return {
+        'isAuthorized': False,
+        'context': {
+            'exampleKey': 'exampleValue'
+        }
+    }
+
     if headers['Authorization'] is None:
         return
 
